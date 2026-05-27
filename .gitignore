@@ -1,0 +1,22 @@
+# Bicep compiled artifacts (regenerate with `az bicep build`)
+main.json
+modules/*.json
+
+# Azure CLI / Bicep local state
+.azure/
+
+# Local parameter overrides
+*.local.bicepparam
+*.local.parameters.json
+
+# Editor / IDE
+.vs/
+.vscode/
+.idea/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
