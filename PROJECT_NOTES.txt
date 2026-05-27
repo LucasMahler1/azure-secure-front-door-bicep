@@ -1,0 +1,239 @@
+================================================================================
+PROJECT NOTES: Secure Azure Front Door with Bicep
+================================================================================
+
+Author:     Lucas Mahler
+Date:       May 27, 2026
+Repository: https://github.com/LucasMahler1/azure-secure-front-door-bicep
+Status:     Templates complete, validated by Bicep compiler. Not deployed live.
+
+
+--------------------------------------------------------------------------------
+1. GOAL
+--------------------------------------------------------------------------------
+
+The objective of this project was to design and write Infrastructure-as-Code
+templates for deploying a production-grade, security-hardened Azure web
+application stack. The deliverable is a set of Azure Bicep files that, when
+deployed, stand up an Azure Front Door fronting a private App Service backend,
+with a Web Application Firewall, Private Link origin lockdown, and full
+diagnostic logging into Log Analytics.
+
+The project was undertaken as a learning and portfolio exercise. No live
+Azure deployment was performed.
+
+
+--------------------------------------------------------------------------------
+2. DESIGN DECISIONS
+--------------------------------------------------------------------------------
+
+A series of design choices were made up front, each chosen for the more
+security-conscious option:
+
+  Front Door SKU:
+    Chose Premium over Standard. Premium is the only SKU that supports
+    Microsoft-managed WAF rule sets (Default Rule Set, Bot Manager) and
+    Private Link to the origin.
+
+  Origin backend:
+    Chose Azure App Service (Linux, P1v3). This is a realistic origin that
+    supports Private Link and represents a common production pattern.
+
+  Logging destination:
+    Chose Log Analytics workspace. Easy to query with KQL and supports
+    Azure Monitor alerting downstream.
+
+  Custom domain:
+    Skipped. The default *.z01.azurefd.net hostname keeps the template
+    self-contained and avoids out-of-band DNS validation steps.
+
+  WAF mode:
+    Chose Prevention over Detection. Prevention actively blocks malicious
+    traffic; Detection would only log it. Production-grade default.
+
+  Origin lockdown method:
+    Chose Front Door Shared Private Link to App Service, paired with
+    publicNetworkAccess: Disabled on the App Service. This removes the
+    direct-to-origin attack path entirely. A header-based alternative
+    (X-Azure-FDID check) was rejected because the public hostname could
+    leak and the lockdown could be bypassed.
+
+
+--------------------------------------------------------------------------------
+3. WHAT WAS BUILT
+--------------------------------------------------------------------------------
+
+File layout in C:\Users\lucas\OneDrive\Desktop\Azure Coding Project:
+
+  main.bicep                  Resource-group-scoped entry point that wires
+                              all modules together. Derives unique resource
+                              names from a short prefix plus a hash of the
+                              resource group ID.
+
+  main.bicepparam             Parameter file with concrete defaults
+                              (eastus2 region, "afdsec" name prefix,
+                              30-day log retention, NODE|20-lts runtime).
+
+  deploy.ps1                  PowerShell convenience wrapper. Ensures the
+                              resource group exists, runs the deployment,
+                              then auto-approves the pending Private
+                              Endpoint connection that Front Door creates
+                              against the App Service.
+
+  modules/log-analytics.bicep Log Analytics workspace (PerGB2018 SKU,
+                              30-day retention).
+
+  modules/app-service.bicep   Linux App Service Plan (P1v3) plus the Web
+                              App itself. Security knobs set:
+                              - httpsOnly: true
+                              - publicNetworkAccess: Disabled
+                              - minTlsVersion: 1.2
+                              - ftpsState: Disabled
+                              - ipSecurityRestrictionsDefaultAction: Deny
+
+  modules/waf-policy.bicep    Front Door Premium WAF policy. Prevention
+                              mode. Attaches two managed rule sets:
+                              Microsoft_DefaultRuleSet 2.1 (Block action)
+                              and Microsoft_BotManagerRuleSet 1.1.
+
+  modules/front-door.bicep    The Front Door itself. Builds the profile,
+                              an AFD endpoint, an origin group with a
+                              30-second HTTPS health probe, an origin
+                              configured with sharedPrivateLinkResource
+                              pointing at the App Service, a route that
+                              forces HTTPS in (httpsRedirect: Enabled)
+                              and out (forwardingProtocol: HttpsOnly),
+                              and a security policy associating the WAF
+                              with the endpoint.
+
+  modules/diagnostics.bicep   Diagnostic settings on both the Front Door
+                              profile and the App Service, routing all
+                              relevant log categories (access, WAF,
+                              health probe, HTTP, console, app,
+                              platform, audit) plus all metrics to the
+                              Log Analytics workspace.
+
+  README.md                   Public-facing documentation with a Mermaid
+                              architecture diagram, file layout, security
+                              properties, and deployment / testing
+                              instructions.
+
+  .gitignore                  Excludes compiled ARM JSON, IDE files, OS
+                              junk, and any *.local.* parameter overrides.
+
+
+--------------------------------------------------------------------------------
+4. SECURITY PROPERTIES OF THE FINAL DESIGN
+--------------------------------------------------------------------------------
+
+  - No public origin. The App Service is reachable only via the Shared
+    Private Link tunnel from Front Door. Its *.azurewebsites.net hostname
+    is not addressable from the public internet.
+
+  - WAF in Prevention mode. Requests matching OWASP-style rules in the
+    Microsoft Default Rule Set 2.1 (SQL injection, XSS, path traversal,
+    etc.) are blocked at the edge, not just logged. The Bot Manager rule
+    set adds protection against known-bad bots.
+
+  - HTTPS enforced end-to-end. The Front Door route redirects HTTP to
+    HTTPS, and forwards to the origin over HTTPS only with certificate
+    name validation enabled.
+
+  - Modern TLS only. The App Service requires TLS 1.2 minimum and
+    disables FTPS entirely.
+
+  - Default-deny IP rules on the App Service.
+
+  - Fully auditable. Every WAF action, access request, health probe, and
+    platform event lands in Log Analytics and can be queried with KQL.
+
+
+--------------------------------------------------------------------------------
+5. VALIDATION PERFORMED
+--------------------------------------------------------------------------------
+
+Because no Azure subscription was available, no live deployment was
+performed. However, the templates were validated using the tools that
+Azure itself runs server-side before accepting a deployment:
+
+  - Installed Azure CLI 2.86.0 via winget.
+  - Installed Bicep CLI v0.43.8 via "az bicep install".
+  - Compiled main.bicep to ARM JSON via "az bicep build". Produced a
+    ~27 KB main.json with zero errors and zero warnings.
+  - Ran "az bicep lint" against main.bicep and every module. All passed
+    with no warnings.
+
+This catches type errors, wrong API versions, missing required
+properties, circular dependencies, and most syntactic problems. It does
+not catch runtime issues such as quota limits, name collisions on
+globally unique resources, or policy violations on a specific
+subscription.
+
+
+--------------------------------------------------------------------------------
+6. SOURCE CONTROL
+--------------------------------------------------------------------------------
+
+The project was committed to a local git repository and pushed to
+GitHub as a public repository:
+
+  https://github.com/LucasMahler1/azure-secure-front-door-bicep
+
+Commit history:
+
+  0db232f  Initial commit: secure Azure Front Door Premium deployment
+  05d430b  Remove cost warning and teardown instructions
+  6954328  Clarify Private Link node as Front Door Shared Private Link
+           to App Service
+
+The compiled main.json is intentionally excluded by .gitignore -- the
+Bicep source is the canonical artifact.
+
+
+--------------------------------------------------------------------------------
+7. WHY NOT DEPLOYED
+--------------------------------------------------------------------------------
+
+This template is not free to run. Approximate idle monthly cost:
+
+  Front Door Premium      ~$330/month
+  App Service Plan P1v3   ~$120/month
+  Log Analytics            $0-5/month
+
+Front Door has no free SKU at any tier, so this specific design cannot
+run on the Azure free tier. The cheapest realistic path to actually
+deploying it is the $200 Azure Free Account credit, with the resources
+torn down within hours of deployment to stay well under the cap.
+
+For this project, the goal was the design and templates themselves, not
+running infrastructure, so the validated Bicep is the final deliverable.
+
+
+--------------------------------------------------------------------------------
+8. POSSIBLE NEXT STEPS
+--------------------------------------------------------------------------------
+
+If the project is ever extended, candidates include:
+
+  - Sign up for an Azure Free Account, deploy the template briefly,
+    capture screenshots of the running Front Door endpoint and WAF logs,
+    and add them to the README as evidence.
+
+  - Add a free-tier companion template (App Service F1 + custom WAF
+    rules instead of Premium SKU) for a no-cost demo variant.
+
+  - Add a sample Node.js application to deploy into the App Service so
+    the health probe returns a real page rather than the default
+    container response.
+
+  - Add a GitHub Actions workflow that runs "az bicep build" on pull
+    requests to catch breakage before merge.
+
+  - Add custom WAF rules on top of the managed rule sets (rate limiting,
+    geo-blocking, IP allow-listing for admin paths).
+
+  - Add a custom domain with managed TLS certificate.
+
+================================================================================
+END OF DOCUMENT
+================================================================================
