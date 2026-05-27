@@ -89,22 +89,6 @@ az bicep build --file main.bicep
 
 The deploy script also approves the pending Private Endpoint connection that Front Door creates against the App Service.
 
-## Cost warning
-
-This template is not free to run. Approximate monthly cost at idle:
-
-| Resource | ~Monthly |
-| --- | --- |
-| Front Door Premium | $330 |
-| App Service Plan P1v3 | $120 |
-| Log Analytics | $0–5 |
-
-Tear it down when you're done:
-
-```powershell
-az group delete -n rg-afdsec-eastus2 --yes --no-wait
-```
-
 ## Testing
 
 After deploying, the Front Door hostname is printed by `deploy.ps1`. Try:
