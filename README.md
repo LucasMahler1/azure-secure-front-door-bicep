@@ -9,7 +9,7 @@ flowchart LR
     client([Client])
     waf{{WAF Policy<br/>Prevention mode<br/>DRS 2.1 + Bot Manager}}
     fd[Azure Front Door Premium<br/>*.azurefd.net]
-    pl[(Private Link)]
+    pl[(Front Door Shared Private Link<br/>to App Service)]
     app[App Service<br/>Linux P1v3<br/>publicNetworkAccess: Disabled]
     law[(Log Analytics<br/>Workspace)]
 
